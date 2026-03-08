@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-primary: #003366; /* CEF Deep Blue */
+  --color-primary-dark: #002244;
+  --color-accent: #E30613; /* CEF Red accent */
+  --color-paper: #FFFFFF;
+  --color-ink: #1A1A1A;
+  --color-muted: #4B5563;
+  --color-light-blue: #F0F7FF;
+}
+
+@layer base {
+  body {
+    @apply bg-paper text-ink font-sans antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-bold tracking-tight text-primary;
+  }
+}
+
+.prose h1 { @apply text-4xl font-bold mb-8 mt-10 text-primary leading-tight; }
+.prose h2 { @apply text-3xl font-bold mb-6 mt-10 text-primary leading-tight; }
+.prose h3 { @apply text-2xl font-bold mb-4 mt-8 text-primary leading-tight; }
+.prose p { @apply mb-6 leading-relaxed text-muted text-lg; }
+.prose ul { @apply list-disc pl-6 mb-6 space-y-3 text-muted; }
+.prose ol { @apply list-decimal pl-6 mb-6 space-y-3 text-muted; }
+.prose blockquote { @apply border-l-4 border-primary/20 pl-6 italic my-8 text-muted/80 text-xl; }
+.prose code { @apply bg-gray-100 px-2 py-0.5 rounded text-sm font-mono text-primary; }
+.prose pre { @apply bg-primary text-white p-8 rounded-xl overflow-x-auto my-8 font-mono text-sm shadow-xl; }
+.prose strong { @apply font-bold text-primary; }
+.prose a { @apply text-primary underline underline-offset-4 decoration-primary/30 hover:decoration-primary transition-all; }
+
+.vertical-text {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
