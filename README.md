@@ -1,14 +1,28 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Project by Miguel Fernández de la Cigoña París
 
-## Run Locally
+> This project was made by me as a showcase of what I can do.  
+> It is publicly available only to serve as a record of my skills and knowledge.
 
-**Prerequisites:**  Node.js
+## Description
 
+This repository contains a personal project reflecting my development abilities.  
+It is **not intended for production use**, and no deployment instructions are included.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+> ⚠️ Although the code is publicly accessible, using it is at your own risk.  
+> It is shared mainly as a reference for my work.
+
+## Status
+
+- Project is **complete** as a demonstration.
+- Code is functional but **not optimized or documented for external users**.
+- No guaranteed support or maintenance.
+
+## Usage
+
+If someone with experience wants to use it, they may do so **at their own risk**.  
+No deployment commands or specific dependencies are provided.
+
+## License
+
+This project is my property and is published **only for reference**.  
+You may view the code and learn from it, but **compatibility or support is not guaranteed**.
