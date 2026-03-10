@@ -74,6 +74,12 @@ export default function ArticleDetail({ isAuthenticated, handleDeletePost }: { i
               {post.title}
             </h1>
             
+            {post.imageUrl && (
+              <div className="mb-12 w-full rounded-2xl overflow-hidden shadow-md">
+                <img src={post.imageUrl} alt={post.title} className="w-full h-auto object-cover max-h-[500px]" />
+              </div>
+            )}
+            
             <div className="prose max-w-none">
               <ReactMarkdown>{post.content}</ReactMarkdown>
             </div>

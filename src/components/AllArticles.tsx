@@ -104,6 +104,11 @@ export default function AllArticles({ posts }: { posts: Post[] }) {
                 className="group bg-white rounded-2xl border border-primary/10 overflow-hidden hover:shadow-xl transition-all duration-300 flex flex-col cursor-pointer"
                 onClick={() => navigate(`/articulo/${post.slug}`)}
               >
+                {post.imageUrl && (
+                  <div className="w-full h-48 overflow-hidden">
+                    <img src={post.imageUrl} alt={post.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                  </div>
+                )}
                 <div className="p-8 flex-1 flex flex-col">
                   <div className="flex items-center gap-4 mb-6">
                     <span className="bg-light-blue text-primary px-3 py-1 rounded-sm text-[10px] font-bold uppercase tracking-widest">

@@ -66,7 +66,8 @@ db.exec(`
     seoKeywords TEXT,
     readingTime INTEGER DEFAULT 5,
     metaDescription TEXT,
-    views INTEGER DEFAULT 0
+    views INTEGER DEFAULT 0,
+    imageUrl TEXT
   );
   
   CREATE TABLE IF NOT EXISTS experience (
@@ -88,6 +89,12 @@ const tableInfo = db.prepare("PRAGMA table_info(posts)").all() as { name: string
 const hasSlug = tableInfo.some(col => col.name === 'slug');
 const hasMetaDescription = tableInfo.some(col => col.name === 'metaDescription');
 const hasViews = tableInfo.some(col => col.name === 'views');
+const hasImageUrl = tableInfo.some(col => col.name === 'imageUrl');
+
+if (!hasImageUrl) {
+  console.log("Migrating database: Adding imageUrl column to 'posts' table...");
+  db.exec(`ALTER TABLE posts ADD COLUMN imageUrl TEXT;`);
+}
 
 if (!hasViews) {
   console.log("Migrating database: Adding views column to 'posts' table...");
@@ -343,7 +350,7 @@ async function startServer() {
 
   // UPDATED POST endpoint with slug validation and new fields
   app.post("/api/posts", requireAuth, apiLimiter, (req, res) => {
-    const { title, content, category, slug, seoKeywords, readingTime, metaDescription } = req.body;
+    const { title, content, category, slug, seoKeywords, readingTime, metaDescription, imageUrl } = req.body;
     
     // Slug validation rules
     const slugRegex = /^[a-z0-9-]+$/;
@@ -358,8 +365,8 @@ async function startServer() {
     }
 
     try {
-      const stmt = db.prepare("INSERT INTO posts (title, content, category, slug, seoKeywords, readingTime, metaDescription, views) VALUES (?, ?, ?, ?, ?, ?, ?, 0)");
-      const info = stmt.run(title, content, category, slug, seoKeywords, readingTime, metaDescription || "");
+      const stmt = db.prepare("INSERT INTO posts (title, content, category, slug, seoKeywords, readingTime, metaDescription, views, imageUrl) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)");
+      const info = stmt.run(title, content, category, slug, seoKeywords, readingTime, metaDescription || "", imageUrl || null);
       res.json({ id: info.lastInsertRowid, slug });
     } catch (error) {
       res.status(500).json({ error: "Error interno al crear el artículo" });
@@ -369,7 +376,7 @@ async function startServer() {
   // NEW ENDPOINT: Edit post
   app.put("/api/posts/:id", requireAuth, apiLimiter, (req, res) => {
     const { id } = req.params;
-    const { title, content, category, slug, seoKeywords, readingTime, metaDescription } = req.body;
+    const { title, content, category, slug, seoKeywords, readingTime, metaDescription, imageUrl } = req.body;
     
     const slugRegex = /^[a-z0-9-]+$/;
     if (!slugRegex.test(slug)) {
@@ -382,8 +389,8 @@ async function startServer() {
     }
 
     try {
-      const stmt = db.prepare("UPDATE posts SET title = ?, content = ?, category = ?, slug = ?, seoKeywords = ?, readingTime = ?, metaDescription = ? WHERE id = ?");
-      const result = stmt.run(title, content, category, slug, seoKeywords, readingTime, metaDescription || "", Number(id));
+      const stmt = db.prepare("UPDATE posts SET title = ?, content = ?, category = ?, slug = ?, seoKeywords = ?, readingTime = ?, metaDescription = ?, imageUrl = ? WHERE id = ?");
+      const result = stmt.run(title, content, category, slug, seoKeywords, readingTime, metaDescription || "", imageUrl || null, Number(id));
       
       if (result.changes === 0) {
         return res.status(404).json({ error: "Artículo no encontrado" });

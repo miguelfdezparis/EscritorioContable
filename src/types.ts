@@ -9,6 +9,7 @@ export interface Post {
   readingTime: number;
   metaDescription: string;
   views?: number;
+  imageUrl?: string;
 }
 
 export interface Experience {

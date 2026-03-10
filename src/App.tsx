@@ -74,7 +74,8 @@ function AppContent() {
     slug: '',
     seoKeywords: '',
     readingTime: 5,
-    metaDescription: ''
+    metaDescription: '',
+    imageUrl: ''
   });
   
   const [loading, setLoading] = useState(true);
@@ -195,7 +196,7 @@ function AppContent() {
       const data = await res.json().catch(() => ({ error: "Error al leer respuesta del servidor" }));
       
       if (res.ok) {
-        setNewPost({ title: '', content: '', category: 'Financiero', slug: '', seoKeywords: '', readingTime: 5, metaDescription: '' });
+        setNewPost({ title: '', content: '', category: 'Financiero', slug: '', seoKeywords: '', readingTime: 5, metaDescription: '', imageUrl: '' });
         setEditPostId(null);
         setShowAdminModal(false);
         fetchData();
@@ -218,7 +219,8 @@ function AppContent() {
       slug: post.slug,
       seoKeywords: post.seoKeywords || '',
       readingTime: post.readingTime || 5,
-      metaDescription: post.metaDescription || ''
+      metaDescription: post.metaDescription || '',
+      imageUrl: post.imageUrl || ''
     });
     setEditPostId(post.id);
     setShowAdminModal(true);
@@ -227,7 +229,7 @@ function AppContent() {
   const closeAdminModal = () => {
     setShowAdminModal(false);
     setEditPostId(null);
-    setNewPost({ title: '', content: '', category: 'Financiero', slug: '', seoKeywords: '', readingTime: 5, metaDescription: '' });
+    setNewPost({ title: '', content: '', category: 'Financiero', slug: '', seoKeywords: '', readingTime: 5, metaDescription: '', imageUrl: '' });
   };
 
   const handleDeletePost = async (id: number): Promise<boolean> => {
@@ -349,6 +351,30 @@ function AppContent() {
     const title = e.target.value;
     const autoSlug = title.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
     setNewPost(prev => ({ ...prev, title, slug: prev.slug || autoSlug }));
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('image', file);
+
+    try {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNewPost(prev => ({ ...prev, imageUrl: data.url }));
+      } else {
+        alert(data.error || 'Error uploading image');
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      alert('Error uploading image');
+    }
   };
 
   return (
@@ -515,12 +541,18 @@ function AppContent() {
                         onClick={() => navigate(`/articulo/${post.slug}`)}
                         className="group cursor-pointer bg-white border border-primary/10 rounded-2xl overflow-hidden hover:border-primary/30 transition-all shadow-sm hover:shadow-xl flex flex-col md:flex-row"
                       >
-                        <div className="md:w-1/3 bg-primary/5 flex items-center justify-center p-8">
-                          {post.category === 'Financiero' && <TrendingUp size={48} className="text-primary/20" />}
-                          {post.category === 'Contable' && <Calculator size={48} className="text-primary/20" />}
-                          {post.category === 'Fiscal' && <Briefcase size={48} className="text-primary/20" />}
-                          {post.category === 'Laboral' && <Scale size={48} className="text-primary/20" />}
-                          {post.category === 'Actualidad/Opinión' && <Newspaper size={48} className="text-primary/20" />}
+                        <div className="md:w-1/3 bg-primary/5 flex items-center justify-center p-8 relative overflow-hidden">
+                          {post.imageUrl ? (
+                            <img src={post.imageUrl} alt={post.title} className="absolute inset-0 w-full h-full object-cover" />
+                          ) : (
+                            <>
+                              {post.category === 'Financiero' && <TrendingUp size={48} className="text-primary/20" />}
+                              {post.category === 'Contable' && <Calculator size={48} className="text-primary/20" />}
+                              {post.category === 'Fiscal' && <Briefcase size={48} className="text-primary/20" />}
+                              {post.category === 'Laboral' && <Scale size={48} className="text-primary/20" />}
+                              {post.category === 'Actualidad/Opinión' && <Newspaper size={48} className="text-primary/20" />}
+                            </>
+                          )}
                         </div>
                         <div className="p-8 md:w-2/3 flex flex-col justify-between">
                           <div>
@@ -532,9 +564,14 @@ function AppContent() {
                                 {format(new Date(post.date), "d MMM, yyyy", { locale: es })}
                               </span>
                             </div>
-                            <h3 className="text-2xl font-bold text-primary mb-4 group-hover:text-accent transition-colors leading-tight">
+                            <h3 className="text-2xl font-bold text-primary mb-2 group-hover:text-accent transition-colors leading-tight">
                               {post.title}
                             </h3>
+                            {post.metaDescription && (
+                              <p className="text-sm text-muted mb-4 line-clamp-2">
+                                {post.metaDescription}
+                              </p>
+                            )}
                           </div>
                           <div className="flex items-center justify-between text-primary font-bold text-[10px] uppercase tracking-widest mt-4">
                             <span className="flex items-center gap-2 group-hover:gap-4 transition-all">
@@ -960,6 +997,21 @@ function AppContent() {
                             />
                           </div>
 
+                          <div>
+                            <label className="block text-[10px] font-black text-primary uppercase tracking-widest mb-4">Imagen de Portada (Opcional)</label>
+                            <div className="flex items-center gap-4">
+                              <input 
+                                type="file" 
+                                accept="image/*"
+                                onChange={handleImageUpload}
+                                className="w-full px-4 py-3 bg-white border border-primary/10 rounded-sm focus:border-primary outline-none transition-all font-bold text-xs file:mr-4 file:py-2 file:px-4 file:rounded-sm file:border-0 file:text-xs file:font-bold file:bg-primary file:text-white hover:file:bg-primary/90"
+                              />
+                              {newPost.imageUrl && (
+                                <img src={newPost.imageUrl} alt="Preview" className="h-12 w-12 object-cover rounded-sm border border-primary/10" />
+                              )}
+                            </div>
+                          </div>
+
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                             <div>
                               <label className="block text-[10px] font-black text-primary uppercase tracking-widest mb-4">Categoría</label>
@@ -1012,7 +1064,7 @@ function AppContent() {
                           {editPostId && (
                             <button 
                               type="button"
-                              onClick={() => { setEditPostId(null); setNewPost({ title: '', content: '', category: 'Financiero', slug: '', seoKeywords: '', readingTime: 5, metaDescription: '' }); }}
+                              onClick={() => { setEditPostId(null); setNewPost({ title: '', content: '', category: 'Financiero', slug: '', seoKeywords: '', readingTime: 5, metaDescription: '', imageUrl: '' }); }}
                               className="px-8 py-5 bg-gray-100 text-primary rounded-sm font-black uppercase tracking-widest text-xs hover:bg-gray-200 transition-all"
                             >
                               Cancelar
