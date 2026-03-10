@@ -1,0 +1,335 @@
+import express from "express";
+import { createServer as createViteServer } from "vite";
+import Database from "better-sqlite3";
+import path from "path";
+import { fileURLToPath } from "url";
+import dotenv from "dotenv";
+import { GoogleGenAI } from "@google/genai";
+import rateLimit from "express-rate-limit";
+import session from "express-session";
+import { generateSecret, verify, generateURI } from "otplib";
+import QRCode from "qrcode";
+import multer from "multer";
+import fs from "fs";
+dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// Ensure uploads directory exists
+const uploadsDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
+// Configure multer for image uploads
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, uploadsDir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const ext = path.extname(file.originalname);
+        cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+    }
+});
+const upload = multer({
+    storage: storage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        }
+        else {
+            cb(new Error('Solo se permiten imágenes.'));
+        }
+    }
+});
+const db = new Database("blog.db");
+// Initialize database with new schema fields (slug, seoKeywords, readingTime, metaDescription)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    category TEXT NOT NULL,
+    date DATETIME DEFAULT CURRENT_TIMESTAMP,
+    slug TEXT UNIQUE,
+    seoKeywords TEXT,
+    readingTime INTEGER DEFAULT 5,
+    metaDescription TEXT
+  );
+  
+  CREATE TABLE IF NOT EXISTS experience (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company TEXT NOT NULL,
+    role TEXT NOT NULL,
+    period TEXT NOT NULL,
+    description TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
+`);
+// MIGRATION: Safely add new columns to existing database if they don't exist
+const tableInfo = db.prepare("PRAGMA table_info(posts)").all();
+const hasSlug = tableInfo.some(col => col.name === 'slug');
+const hasMetaDescription = tableInfo.some(col => col.name === 'metaDescription');
+if (!hasSlug) {
+    console.log("Migrating database: Adding new SEO columns to 'posts' table...");
+    db.exec(`
+    ALTER TABLE posts ADD COLUMN slug TEXT;
+    ALTER TABLE posts ADD COLUMN seoKeywords TEXT;
+    ALTER TABLE posts ADD COLUMN readingTime INTEGER DEFAULT 5;
+  `);
+    // Generate slugs for old posts
+    const oldPosts = db.prepare("SELECT id, title FROM posts").all();
+    const updateStmt = db.prepare("UPDATE posts SET slug = ?, seoKeywords = ?, readingTime = ? WHERE id = ?");
+    for (const p of oldPosts) {
+        const generatedSlug = p.title.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') + '-' + p.id;
+        updateStmt.run(generatedSlug, "contabilidad, finanzas, blog", 5, p.id);
+    }
+}
+if (!hasMetaDescription) {
+    console.log("Migrating database: Adding metaDescription column to 'posts' table...");
+    db.exec(`
+    ALTER TABLE posts ADD COLUMN metaDescription TEXT;
+  `);
+}
+// Migrate old categories
+db.exec(`
+  UPDATE posts SET category = 'Financiero' WHERE category = 'Finanzas';
+  UPDATE posts SET category = 'Contable' WHERE category = 'Contabilidad';
+`);
+// Rate limiters
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    message: { error: "Demasiadas peticiones desde esta IP, por favor inténtalo de nuevo más tarde." }
+});
+const authLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    message: { error: "Demasiados intentos de inicio de sesión, por favor inténtalo de nuevo en una hora." }
+});
+const DEFAULT_PHOTO_URL = "https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=800";
+async function seedDatabase() {
+    const expCount = db.prepare("SELECT COUNT(*) as count FROM experience").get();
+    if (expCount.count > 0)
+        return;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+    if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.length < 10) {
+        console.warn("Seeding: No valid GEMINI_API_KEY found. Using fallback experience data.");
+        insertFallbackExperience();
+        insertFallbackPosts();
+        return;
+    }
+    console.log("Seeding database with author info using Gemini...");
+    const ai = new GoogleGenAI({ apiKey });
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: "Genera un JSON con la experiencia profesional de Jose Ramón Fernández de la Cigoña Fraga (LinkedIn: https://www.linkedin.com/in/josefcfraga/). El JSON debe ser un array de objetos con las propiedades: company, role, period, description. Incluye al menos 3 experiencias relevantes encontradas en su perfil profesional. También busca una URL de su foto de perfil profesional si es posible y devuélvela en un campo 'photoUrl'.",
+            config: {
+                tools: [{ googleSearch: {} }],
+                responseMimeType: "application/json",
+            },
+        });
+        const data = JSON.parse(response.text);
+        const experience = data.experience || data;
+        const photoUrl = data.photoUrl || DEFAULT_PHOTO_URL;
+        if (photoUrl) {
+            db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run("author_photo", photoUrl);
+        }
+        const insertExp = db.prepare("INSERT INTO experience (company, role, period, description) VALUES (?, ?, ?, ?)");
+        for (const exp of Array.isArray(experience) ? experience : []) {
+            insertExp.run(exp.company, exp.role, exp.period, exp.description);
+        }
+        insertFallbackPosts();
+        console.log("Database seeded successfully via Gemini!");
+    }
+    catch (error) {
+        console.error("Error seeding database via Gemini (using fallback):", error);
+        insertFallbackExperience();
+        insertFallbackPosts();
+    }
+}
+function insertFallbackExperience() {
+    const expCount = db.prepare("SELECT COUNT(*) as count FROM experience").get();
+    if (expCount.count > 0)
+        return;
+    const insertExp = db.prepare("INSERT INTO experience (company, role, period, description) VALUES (?, ?, ?, ?)");
+    insertExp.run("Editor y Colaborador Especializado", "Especialista en Contenido Financiero y Laboral", "2010 - Actualidad", "Generación de contenido técnico y divulgativo sobre normativa contable, financiera y laboral para diversos portales profesionales y empresas del sector.");
+    insertExp.run("Asesoría y Gestión Empresarial", "Consultor Senior", "2000 - 2010", "Dirección y asesoramiento en materia fiscal, contable y laboral para PYMES, optimizando procesos de gestión y cumplimiento normativo.");
+    insertExp.run("Sector Bancario y Financiero", "Responsable de Análisis", "1990 - 2000", "Análisis de riesgos, control de gestión y supervisión de estados financieros en entidades de crédito.");
+}
+function insertFallbackPosts() {
+    const postCount = db.prepare("SELECT COUNT(*) as count FROM posts").get();
+    if (postCount.count > 0)
+        return;
+    const insertPost = db.prepare("INSERT INTO posts (title, content, category, slug, seoKeywords, readingTime, metaDescription) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    insertPost.run("La importancia de la contabilidad analítica en la PYME", "La contabilidad analítica es una herramienta fundamental para la gestión interna. Permite conocer el coste real de cada producto o servicio y tomar decisiones basadas en datos precisos.", "Contable", "importancia-contabilidad-analitica-pyme", "contabilidad analítica, pyme, gestión interna, decisiones financieras, rentabilidad", 6, "Descubre por qué la contabilidad analítica es vital para la gestión interna de tu PYME y cómo te ayuda a tomar mejores decisiones.");
+    insertPost.run("Novedades en la cotización de autónomos para 2024", "El nuevo sistema basado en ingresos reales introduce cambios significativos en las cuotas mensuales. Es fundamental planificar los rendimientos netos para evitar regularizaciones inesperadas.", "Laboral", "novedades-cotizacion-autonomos-2024", "autónomos, cotización 2024, ingresos reales, cuotas mensuales, laboral", 4, "Conoce las principales novedades en la cotización de autónomos para 2024 y cómo planificar tus rendimientos netos.");
+    insertPost.run("Análisis de ratios financieros para el control de gestión", "Los ratios de liquidez y solvencia son vitales para asegurar la continuidad del negocio. Un análisis periódico permite detectar tensiones de tesorería antes de que sean críticas.", "Financiero", "analisis-ratios-financieros-control-gestion", "ratios financieros, liquidez, solvencia, control de gestión, tesorería", 8, "Aprende a analizar los ratios financieros clave para el control de gestión y asegurar la liquidez y solvencia de tu empresa.");
+}
+async function startServer() {
+    seedDatabase().catch(err => console.error("Background seeding failed:", err));
+    const app = express();
+    const PORT = process.env.PORT ? parseInt(process.env.PORT) : 65010;
+    app.set("trust proxy", 1);
+    app.use(express.json());
+    app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+    app.use(session({
+        secret: process.env.SESSION_SECRET || "jose-ramon-secret-key-2024",
+        resave: false,
+        saveUninitialized: false,
+        cookie: {
+            secure: process.env.NODE_ENV === "production",
+            httpOnly: true,
+            maxAge: 24 * 60 * 60 * 1000,
+            sameSite: "lax"
+        }
+    }));
+    const requireAuth = (req, res, next) => {
+        if (req.session.authenticated) {
+            next();
+        }
+        else {
+            res.status(401).json({ error: "No autorizado" });
+        }
+    };
+    app.get("/api/posts", apiLimiter, (req, res) => {
+        const posts = db.prepare("SELECT * FROM posts ORDER BY date DESC").all();
+        res.json(posts);
+    });
+    // NEW ENDPOINT: Get individual post by slug
+    app.get("/api/posts/:slug", apiLimiter, (req, res) => {
+        const { slug } = req.params;
+        const post = db.prepare("SELECT * FROM posts WHERE slug = ?").get(slug);
+        if (post) {
+            res.json(post);
+        }
+        else {
+            res.status(404).json({ error: "Artículo no encontrado" });
+        }
+    });
+    app.get("/api/author", apiLimiter, (req, res) => {
+        const photo = db.prepare("SELECT value FROM settings WHERE key = ?").get("author_photo");
+        res.json({
+            name: "Jose Ramón Fernández de la Cigoña Fraga",
+            photoUrl: photo?.value || DEFAULT_PHOTO_URL
+        });
+    });
+    app.post("/api/login", authLimiter, async (req, res) => {
+        const { username, password, twoFactorCode } = req.body;
+        const adminUser = process.env.ADMIN_USER || "admin";
+        const adminPass = process.env.ADMIN_PASSWORD || "admin";
+        if (username !== adminUser || password !== adminPass) {
+            return res.status(401).json({ error: "Credenciales incorrectas" });
+        }
+        const secretRow = db.prepare("SELECT value FROM settings WHERE key = 'totp_secret'").get();
+        const verifiedRow = db.prepare("SELECT value FROM settings WHERE key = 'totp_verified'").get();
+        let secret = secretRow?.value;
+        let isVerified = verifiedRow?.value === 'true';
+        if (!secret) {
+            secret = generateSecret();
+            db.prepare("INSERT INTO settings (key, value) VALUES ('totp_secret', ?)").run(secret);
+            db.prepare("INSERT INTO settings (key, value) VALUES ('totp_verified', 'false')").run();
+            isVerified = false;
+        }
+        if (!twoFactorCode) {
+            if (!isVerified) {
+                const otpauth = generateURI({
+                    issuer: 'CEF_JoseRamon',
+                    label: username,
+                    secret
+                });
+                const qrCodeUrl = await QRCode.toDataURL(otpauth);
+                return res.json({ require2FASetup: true, qrCode: qrCodeUrl });
+            }
+            else {
+                return res.json({ require2FA: true });
+            }
+        }
+        const result = await verify({ token: twoFactorCode, secret });
+        if (result.valid) {
+            if (!isVerified) {
+                db.prepare("UPDATE settings SET value = 'true' WHERE key = 'totp_verified'").run();
+            }
+            req.session.authenticated = true;
+            return res.json({ success: true });
+        }
+        else {
+            return res.status(401).json({ error: "Código 2FA inválido" });
+        }
+    });
+    app.post("/api/logout", (req, res) => {
+        req.session.destroy((err) => {
+            if (err) {
+                res.status(500).json({ error: "Error al cerrar sesión" });
+            }
+            else {
+                res.json({ success: true });
+            }
+        });
+    });
+    app.get("/api/check-auth", (req, res) => {
+        res.json({ authenticated: !!req.session.authenticated });
+    });
+    // UPDATED POST endpoint with slug validation and new fields
+    app.post("/api/posts", requireAuth, apiLimiter, (req, res) => {
+        const { title, content, category, slug, seoKeywords, readingTime, metaDescription } = req.body;
+        // Slug validation rules
+        const slugRegex = /^[a-z0-9-]+$/;
+        if (!slugRegex.test(slug)) {
+            return res.status(400).json({ error: "El slug solo puede contener letras minúsculas, números y guiones, sin espacios." });
+        }
+        // Check unique slug
+        const existing = db.prepare("SELECT id FROM posts WHERE slug = ?").get(slug);
+        if (existing) {
+            return res.status(400).json({ error: "slug already exists" });
+        }
+        try {
+            const stmt = db.prepare("INSERT INTO posts (title, content, category, slug, seoKeywords, readingTime, metaDescription) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            const info = stmt.run(title, content, category, slug, seoKeywords, readingTime, metaDescription || "");
+            res.json({ id: info.lastInsertRowid, slug });
+        }
+        catch (error) {
+            res.status(500).json({ error: "Error interno al crear el artículo" });
+        }
+    });
+    app.delete("/api/posts/:id", requireAuth, apiLimiter, (req, res) => {
+        const { id } = req.params;
+        db.prepare("DELETE FROM posts WHERE id = ?").run(id);
+        res.json({ success: true });
+    });
+    // NEW ENDPOINT: Upload images for markdown editor
+    app.post("/api/upload", requireAuth, upload.single('image'), (req, res) => {
+        if (!req.file) {
+            return res.status(400).json({ error: "No se subió ninguna imagen" });
+        }
+        // Return the URL where the image can be accessed
+        const imageUrl = `/uploads/${req.file.filename}`;
+        res.json({ url: imageUrl });
+    });
+    app.get("/api/experience", apiLimiter, (req, res) => {
+        const exp = db.prepare("SELECT * FROM experience ORDER BY id DESC").all();
+        res.json(exp);
+    });
+    if (process.env.NODE_ENV !== "production") {
+        const vite = await createViteServer({
+            server: { middlewareMode: true },
+            appType: "spa",
+        });
+        app.use(vite.middlewares);
+    }
+    else {
+        app.use(express.static(path.join(__dirname, "dist")));
+        app.get("*", (req, res) => {
+            res.sendFile(path.join(__dirname, "dist/index.html"));
+        });
+    }
+    app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+    });
+}
+startServer();
